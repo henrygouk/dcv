@@ -32,14 +32,24 @@ void main()
     auto pixelSize = imslice.elementsCount;
     auto shiTomasiDraw = imslice.slice;
     auto harrisDraw = imslice.slice;
+    auto fastDraw = imslice.slice;
 
     // estimate corner response for each of corner algorithms by using 5x5 window.
     auto shiTomasiResponse = shiTomasiCorners(gray, 5).filterNonMaximum;
     auto harrisResponse = harrisCorners(gray, 5).filterNonMaximum;
+    auto fastDetector = new FASTDetector(100, FASTDetector.Type.FAST_9, FASTDetector.PERFORM_NON_MAX_SUPRESSION);
 
     // extract corners from the response matrix ( extract 100 corners, where each response is larger than 0.)
     auto shiTomasiCorners = extractCorners(shiTomasiResponse, 100, 0.0f);
     auto harrisCorners = extractCorners(harrisResponse, 100, 0.0f);
+
+    import std.algorithm : map;
+    import std.array : array;
+    
+    auto fastCorners = fastDetector
+                      .detect(imslice.rgb2gray.asImage)
+                      .map!(x => cast(size_t[2])[x.y, x.x])
+                      .array();
 
     // visualize corner response, and write it to disk.
     visualizeCornerResponse(harrisResponse, "harrisResponse");
@@ -48,6 +58,7 @@ void main()
     // plot corner points on image.
     cornerPlot(harrisDraw, harrisCorners, "harrisCorners");
     cornerPlot(shiTomasiDraw, shiTomasiCorners, "shiTomasiCorners");
+    cornerPlot(fastDraw, fastCorners, "fastCorners");
 
     waitKey();
 }
