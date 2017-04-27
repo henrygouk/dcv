@@ -9,9 +9,13 @@ License: $(LINK3 http://www.boost.org/LICENSE_1_0.txt, Boost Software License - 
 */
 module dcv.features.descriptor.brief;
 
+import std.algorithm : min, max;
+
 import mir.ndslice;
 
 import dcv.core.image : Image;
+import dcv.imgproc.filter : gaussian;
+import dcv.imgproc.convolution : conv;
 import dcv.features.utils : Feature;
 import dcv.features.descriptor;
 
@@ -21,7 +25,7 @@ class BRIEFDescriptor : DescriptorExtractor
     {
         this(size_t bytes = 32, int patchSize = 48, size_t kernelSize = 9)
         {
-            mTestLocations = new int[bytes * 8];
+            mTestLocations = new int[4][bytes * 8];
 
             float randomGaussian(float mean, float var)
             {
@@ -39,7 +43,7 @@ class BRIEFDescriptor : DescriptorExtractor
                 }
             }
 
-            mKernel = gaussian!ubyte(kernelSize / 3, kernelSize, kernelSize);
+            mKernel = gaussian!float(kernelSize / 3, kernelSize, kernelSize);
         }
 
         Descriptor[] compute(in Image image, in Feature[] features)
@@ -47,7 +51,7 @@ class BRIEFDescriptor : DescriptorExtractor
             //Make sure the image only has a single channel
             //
             
-            auto data = conv(image.asSlice!ubyte, mKernel);
+            auto data = conv(image.sliced.as!float.slice, mKernel);
 
             import std.algorithm : map;
             import std.array : array;
@@ -59,7 +63,7 @@ class BRIEFDescriptor : DescriptorExtractor
     private
     {
         int[4][] mTestLocations;
-        Slice!(Contiguous, [2], ubyte *) mKernel;
+        Slice!(Contiguous, [2], float *) mKernel;
 
         Descriptor computeSingleDescriptor(S)(S data, in Feature f)
         {
@@ -75,16 +79,18 @@ class BRIEFDescriptor : DescriptorExtractor
                     t[2] += f.y;
                     t[3] += f.x;
 
-                    t[0] = min(max(t[0], 0), data.length!0);
-                    t[1] = min(max(t[1], 0), data.length!1);
-                    t[2] = min(max(t[2], 0), data.length!0);
-                    t[3] = min(max(t[3], 0), data.length!1);
+                    t[0] = min(max(t[0], 0), data.length!0 - 1);
+                    t[1] = min(max(t[1], 0), data.length!1 - 1);
+                    t[2] = min(max(t[2], 0), data.length!0 - 1);
+                    t[3] = min(max(t[3], 0), data.length!1 - 1);
 
-                    vals[i] |= (data[t[0], t[1]] < data[t[2], t[3]] ? 1 : 0) << j;
+                    vals[i] |= (data[t[0], t[1], 0] < data[t[2], t[3], 0] ? 1 : 0) << j;
                 }
             }
 
-            return Descriptor(vals);
+            Descriptor ret = {bytes: vals};
+
+            return ret;
         }
     }
 }

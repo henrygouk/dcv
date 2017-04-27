@@ -1,0 +1,16 @@
+{
+	"name": "matching",
+	"authors": [
+		"Henry Gouk"
+	],
+	"description": "A minimal D application.",
+	"copyright": "Copyright © 2017, Henry Gouk",
+	"license": "proprietary",
+	"dependencies": {
+		"dcv": {"path": "../../"}
+	},
+	"subConfigurations":
+    {
+        "dcv": "ggplotd"
+    }
+}
