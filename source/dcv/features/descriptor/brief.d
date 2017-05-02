@@ -51,7 +51,7 @@ class BRIEFDescriptor : DescriptorExtractor
             //Make sure the image only has a single channel
             //
             
-            auto data = conv(image.sliced.as!float.slice, mKernel);
+            auto data = conv(image.asType!float.sliced!float, mKernel);
 
             import std.algorithm : map;
             import std.array : array;
@@ -69,11 +69,11 @@ class BRIEFDescriptor : DescriptorExtractor
         {
             auto vals = new ubyte[mTestLocations.length / 8];
 
-            for(size_t i = 0; i < vals.length; i += 8)
+            for(size_t i = 0; i < vals.length; i++)
             {
                 for(size_t j = 0; j < 8; j++)
                 {
-                    auto t = mTestLocations[i + j];
+                    auto t = mTestLocations[i * 8 + j];
                     t[0] += f.y;
                     t[1] += f.x;
                     t[2] += f.y;
