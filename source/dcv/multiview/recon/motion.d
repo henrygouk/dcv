@@ -1,7 +1,8 @@
 module dcv.multiview.recon.motion;
 
-import matte.matrix;
+import std.algorithm : max;
 
+import matte.matrix;
 import mir.ndslice;
 
 import dcv.features;
@@ -9,7 +10,7 @@ import dcv.features;
 auto computeFundamentalMatrix(in Feature[] points1, in Feature[] points2, size_t numIts = 200, float thresh = 3.0f)
 {
     assert(points1.length == points2.length);
-    assert(points1.length > 8);
+    assert(points1.length >= 8);
 
     auto convert(T)(T t)
     {
@@ -79,7 +80,7 @@ auto computeFundamentalMatrix(in Feature[] points1, in Feature[] points2, size_t
         if(consensus.length > bestConsensus.length)
         {
             import std.stdio;
-            writeln("Replacing ", bestConsensus.length, " with ", consensus.length, " at itr ", i);
+            //writeln("Replacing ", bestConsensus.length, " with ", consensus.length, " at itr ", i);
             bestConsensus = consensus;
         }
     }
@@ -87,6 +88,11 @@ auto computeFundamentalMatrix(in Feature[] points1, in Feature[] points2, size_t
     auto consensusMatches = bestConsensus
                            .map!(x => matches[x])
                            .array();
+
+    if(consensusMatches.length < 8)
+    {
+        return tuple!("F", "inliers")(new float[9], new size_t[0]);
+    }
 
     auto fmat = fmat8Point(consensusMatches.map!(x => x.p1).array(), consensusMatches.map!(x => x.p2).array()).data;
     auto inliers = bestConsensus;
