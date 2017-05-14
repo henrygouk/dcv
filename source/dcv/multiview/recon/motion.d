@@ -9,8 +9,12 @@ import dcv.features;
 
 auto computeFundamentalMatrix(in Feature[] points1, in Feature[] points2, size_t numIts = 200, float thresh = 3.0f)
 {
-    assert(points1.length == points2.length);
-    assert(points1.length >= 8);
+    import std.typecons : tuple;
+
+    if(points1.length != points2.length || points1.length < 8)
+    {
+        return tuple!("F", "inliers")(new float[9], new size_t[0]);
+    }
 
     auto convert(T)(T t)
     {
@@ -27,7 +31,6 @@ auto computeFundamentalMatrix(in Feature[] points1, in Feature[] points2, size_t
     import std.array : array;
     import std.random : randomCover;
     import std.range : take, zip;
-    import std.typecons : tuple;
 
     Matrix!float vector(float[] data)
 	{
