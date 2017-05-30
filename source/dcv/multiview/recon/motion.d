@@ -7,15 +7,129 @@ import mir.ndslice;
 
 import dcv.features;
 
-auto computeFundamentalMatrix(in Feature[] points1, in Feature[] points2, size_t numIts = 200, float thresh = 3.0f)
+auto computeMotionHypotheses(in float[] essential)
 {
-    import std.typecons : tuple;
+    auto E = Matrix!float(3, 3);
+    E.data[] = essential[];
 
-    if(points1.length != points2.length || points1.length < 8)
+    auto W = Matrix!float(3, 3);
+    W.data[] = [0.0f, -1.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f];
+    auto Wt = W.transpose();
+
+    auto res = svd(E);
+    auto u = Matrix!float(3, 3);
+    auto vt = Matrix!float(3, 3);
+    u.data[] = res.u[];
+    vt.data[] = res.vt[];
+
+    auto R1 = u * W * vt;
+    auto R2 = u * Wt * vt;
+
+    import std.typecons : tuple;
+    return tuple!("R1", "R2", "t")(R1.data, R2.data, u.data[$ - 3 .. $]);
+}
+
+auto computeMotion(in float[] essential, in float[2][] points1, in float[2][] points2)
+{
+    auto h = computeMotionHypotheses(essential);
+
+    auto proj1 = [
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f    
+    ];
+
+    float bestScore = -float.max;
+
+    struct MotionResult
     {
-        return tuple!("F", "inliers")(new float[9], new size_t[0]);
+        float[3] translation;
+        float[9] rotation;
+        float[3][] points;
     }
 
+    MotionResult res;
+
+    //Iterate over each hypothesis
+    foreach(r; [h.R1, h.R2])
+    {
+        for(int i = -1; i < 2; i += 2)
+        {
+            //Triangulate the points according to this hypothesis
+            auto proj2 = [
+                r[0], r[1], r[2], h.t[0] * i,
+                r[3], r[4], r[5], h.t[1] * i,
+                r[6], r[7], r[8], h.t[2] * i
+            ];
+
+            auto X = triangulatePoints(proj1, proj2, points1, points2);
+
+            import std.algorithm : map, fold;
+            import std.array : array;
+            import std.numeric : dotProduct;
+
+            //If this hypothesis has the most plausible points so far, keep track of it
+            float score = X
+                         .map!(x => x[2] * x[3] > 0.0f && dotProduct(proj2[$ - 4 .. $], x) > 0.0f ? 1.0f : 0.0f)
+                         .fold!((a, b) => a + b);
+
+            if(score > bestScore)
+            {
+                bestScore = score;
+                res.rotation[] = r[];
+                res.translation[] = h.t[] * i;
+                res.points[] = X.map!(x => cast(float[3])(x[0 .. 3])).array();
+
+                for(size_t j = 0; j < X.length; j++)
+                {
+                    res.points[j][] /= X[j][3];
+                }
+            }
+        }
+    }
+
+    //Return most plausible hypothesis
+    return res;
+}
+
+auto triangulatePoints(in float[] proj1, in float[] proj2, in float[2][] points1, in float[2][] points2)
+{
+    import std.range : iota, zip;
+
+    auto A = Matrix!float(4, 4);
+
+    auto res = new float[4][points1.length];
+
+    //Iterate over each pair of points
+    foreach(j, p1, p2; zip(iota(0, points1.length), points1, points2))
+    {
+        ///Set up a least squares problem
+        for(size_t i = 0; i < 4; i++)
+        {
+            A[0, i] = p1[0] * proj1[2 * 4 + i] - proj1[0 * 4 + i];
+            A[1, i] = p1[1] * proj1[2 * 4 + i] - proj1[1 * 4 + i];
+            A[2, i] = p2[0] * proj2[2 * 4 + i] - proj2[0 * 4 + i];
+            A[3, i] = p2[1] * proj2[2 * 4 + i] - proj2[1 * 4 + i];
+        }
+
+        auto d = svd(A);
+
+        res[j][] = d.vt[$ - 4 .. $];
+    }
+
+    return res;
+}
+
+auto computeEssentialMatrix(in float[2][] p1, in float[2][] p2, size_t numIts = 200, float thresh = 3.0f)
+{
+    auto res = computeMatrix(p1, p2, numIts, thresh, true);
+
+    import std.typecons : tuple;
+    return tuple!("E", "inliers")(res.M, res.inliers);
+}
+
+auto computeFundamentalMatrix(in Feature[] points1, in Feature[] points2, size_t numIts = 200, float thresh = 3.0f)
+{
     auto convert(T)(T t)
     {
         import std.algorithm : map;
@@ -27,12 +141,27 @@ auto computeFundamentalMatrix(in Feature[] points1, in Feature[] points2, size_t
     auto p1 = convert(points1);
     auto p2 = convert(points2);
 
+    auto res = computeMatrix(p1, p2, numIts, thresh, false);
+
+    import std.typecons : tuple;
+    return tuple!("F", "inliers")(res.M, res.inliers);
+}
+
+private auto computeMatrix(in float[2][] p1, in float[2][] p2, size_t numIts, float thresh, bool computeEssential)
+{
+    import std.typecons : tuple;
+
+    if(p1.length != p2.length || p1.length < 8)
+    {
+        return tuple!("M", "inliers")(new float[9], new size_t[0]);
+    }
+
     import std.algorithm : map;
     import std.array : array;
     import std.random : randomCover;
     import std.range : take, zip;
 
-    Matrix!float vector(float[] data)
+    Matrix!float vector(in float[] data)
 	{
 		auto v = matte.matrix.vector(data.length);
 		v.data[] = data[];
@@ -50,7 +179,7 @@ auto computeFundamentalMatrix(in Feature[] points1, in Feature[] points2, size_t
         auto sample = matches.randomCover.take(8).array();
 
         //Estimate the model
-        auto F = fmat8Point(sample.map!(x => x.p1).array(), sample.map!(x => x.p2).array());
+        auto F = fmat8Point(sample.map!(x => x.p1).array(), sample.map!(x => x.p2).array(), computeEssential);
 
         size_t[] consensus;
 
@@ -94,16 +223,18 @@ auto computeFundamentalMatrix(in Feature[] points1, in Feature[] points2, size_t
 
     if(consensusMatches.length < 8)
     {
-        return tuple!("F", "inliers")(new float[9], new size_t[0]);
+        return tuple!("M", "inliers")(new float[9], new size_t[0]);
     }
 
-    auto fmat = fmat8Point(consensusMatches.map!(x => x.p1).array(), consensusMatches.map!(x => x.p2).array()).data;
+    auto fmat = fmat8Point(consensusMatches.map!(x => x.p1).array(), consensusMatches.map!(x => x.p2).array(),
+        computeEssential).data;
+
     auto inliers = bestConsensus;
 
-    return tuple!("F", "inliers")(fmat, inliers);
+    return tuple!("M", "inliers")(fmat, inliers);
 }
 
-private auto fmat8Point(in float[2][] points1, in float[2][] points2)
+private auto fmat8Point(in float[2][] points1, in float[2][] points2, bool computeEssential)
 {
     assert(points1.length == points2.length);
     assert(points1.length >= 8);
@@ -112,32 +243,44 @@ private auto fmat8Point(in float[2][] points1, in float[2][] points2)
     float[2] mean1 = [0.0f, 0.0f];
     float[2] mean2 = [0.0f, 0.0f];
 
-    for(size_t i = 0; i < points1.length; i++)
-    {
-        mean1[] += points1[i][];
-        mean2[] += points2[i][];
-    }
-
     float c = 1.0f / points1.length;
-    mean1[] *= c;
-    mean2[] *= c;
+
+    if(!computeEssential)
+    {
+        for(size_t i = 0; i < points1.length; i++)
+        {
+            mean1[] += points1[i][];
+            mean2[] += points2[i][];
+        }
+
+        mean1[] *= c;
+        mean2[] *= c;
+    }
 
     float scale1 = 0.0f;
     float scale2 = 0.0f;
 
-    import std.math : sqrt, pow;
-
-    for(size_t i = 0; i < points1.length; i++)
+    if(!computeEssential)
     {
-        scale1 += sqrt(pow(points1[i][0] - mean1[0], 2.0f) + pow(points1[i][1] - mean1[1], 2.0f));
-        scale2 += sqrt(pow(points2[i][0] - mean2[0], 2.0f) + pow(points2[i][1] - mean2[1], 2.0f));
+        import std.math : sqrt, pow;
+
+        for(size_t i = 0; i < points1.length; i++)
+        {
+            scale1 += sqrt(pow(points1[i][0] - mean1[0], 2.0f) + pow(points1[i][1] - mean1[1], 2.0f));
+            scale2 += sqrt(pow(points2[i][0] - mean2[0], 2.0f) + pow(points2[i][1] - mean2[1], 2.0f));
+        }
+
+        scale1 *= c;
+        scale2 *= c;
+
+        scale1 = sqrt(2.0f) / scale1;
+        scale2 = sqrt(2.0f) / scale2;
     }
-
-    scale1 *= c;
-    scale2 *= c;
-
-    scale1 = sqrt(2.0f) / scale1;
-    scale2 = sqrt(2.0f) / scale2;
+    else
+    {
+        scale1 = 1.0f;
+        scale2 = 1.0f;
+    }
 
     auto p1 = new float[2][points1.length];
     auto p2 = new float[2][points1.length];
@@ -178,6 +321,13 @@ private auto fmat8Point(in float[2][] points1, in float[2][] points2)
     s[0, 0] = fsvd.s[0];
     s[1, 1] = fsvd.s[1];
     vt.data[] = fsvd.vt[];
+
+    if(computeEssential)
+    {
+        float ms = (s[0, 0] + s[1, 1]) / 2.0f;
+        s[0, 0] = ms;
+        s[1, 1] = ms;
+    }
 
     auto T1 = Matrix!float(3, 3);
     auto T2 = Matrix!float(3, 3);
